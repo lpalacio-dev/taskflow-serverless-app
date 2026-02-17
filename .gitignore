@@ -1,0 +1,5 @@
+.aws-sam/
+samconfig.toml
+backend/lambdas/authorizer/*/
+*.py[cod]
+six.py

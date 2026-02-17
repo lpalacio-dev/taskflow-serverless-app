@@ -1,0 +1,6 @@
+{
+  "routeKey": "GET /tasks",
+  "queryStringParameters": { "projectId": "backend" },
+  "pathParameters": {},
+  "body": null
+}

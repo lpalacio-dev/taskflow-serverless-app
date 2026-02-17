@@ -1,0 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+
+/* ── Variables globales del diseño ─────────────────────────────────────── */
+:root {
+  --bg:      #0a0a0f;
+  --surface: #12121a;
+  --border:  #1e1e2e;
+  --accent:  #00e5c0;
+  --accent2: #ff4d6d;
+  --warn:    #ffd166;
+  --text:    #e2e2f0;
+  --muted:   #5a5a7a;
+  --radius:  4px;
+  --mono:    'Space Mono', monospace;
+  --sans:    'Syne', sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+}
+
+body::before {
+  content: '';
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgba(0,229,192,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,229,192,.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Shared form styles */
+.field { margin-bottom: 16px; }
+.field label {
+  display: block; font-family: var(--mono); font-size: 11px;
+  color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
+}
+.field input {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); font-family: var(--mono);
+  font-size: 14px; padding: 10px 14px; outline: none; transition: border-color .15s;
+}
+.field input:focus { border-color: var(--accent); }
+
+.select-field {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); font-family: var(--mono);
+  font-size: 14px; padding: 10px 14px; outline: none; appearance: none;
+  transition: border-color .15s;
+}
+.select-field:focus { border-color: var(--accent); }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 13px; font-weight: 700;
+  letter-spacing: 1px; text-transform: uppercase;
+  padding: 12px 24px; border: none; border-radius: var(--radius);
+  cursor: pointer; transition: all .15s; width: 100%;
+}
+.btn-primary { background: var(--accent); color: #000; }
+.btn-primary:hover { background: #00ffda; transform: translateY(-1px); }
+.btn-ghost {
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border); width: auto; margin-top: 12px;
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn-sm { padding: 10px 20px; font-size: 12px; width: auto; }

@@ -1,0 +1,297 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: TaskFlow — CRUD de tareas serverless
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 10
+    MemorySize: 256
+    Environment:
+      Variables:
+        TASKS_TABLE:       !Ref TasksTable
+        CONNECTIONS_TABLE: !Ref ConnectionsTable
+        STAGE:             !Ref Stage
+
+Resources:
+  # ── Cognito User Pool ──────────────────────────────────────────────────
+  TaskFlowUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "taskflow-users-${Stage}"
+      AutoVerifiedAttributes: [email]   # envía código de verificación por email
+      UsernameAttributes: [email]       # login con email, no username
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  TaskFlowUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: taskflow-web-client
+      UserPoolId: !Ref TaskFlowUserPool
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH    # login con email + password
+        - ALLOW_REFRESH_TOKEN_AUTH    # renovar tokens
+      GenerateSecret: false           # DEBE ser false para apps web/SPA
+
+  # ── Tabla de tareas ────────────────────────────────────────────────────
+  TasksTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "taskflow-tasks-${Stage}"
+      BillingMode: PAY_PER_REQUEST   # sin capacidad provisionada = gratis en Free Tier
+      AttributeDefinitions:
+        - AttributeName: taskId
+          AttributeType: S
+        - AttributeName: projectId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: taskId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: projectId-index
+          KeySchema:
+            - AttributeName: projectId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+    # Borrado automático al eliminar el stack
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  # ── Tabla de conexiones WebSocket ──────────────────────────────────────
+  ConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "taskflow-connections-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true           # limpia conexiones expiradas automáticamente
+    # Borrado automático al eliminar el stack
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+  # ── HTTP API con auth Cognito ──────────────────────────────────────────
+  TaskApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowHeaders: ["Content-Type", "Authorization"]
+        AllowMethods: ["GET", "PUT", "DELETE", "OPTIONS"]
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${TaskFlowUserPool}"
+              audience: [!Ref TaskFlowUserPoolClient]
+
+  # ── Lambda CRUD ────────────────────────────────────────────────────────
+  TaskHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "taskflow-task-handler-${Stage}"
+      CodeUri: lambdas/task-handler/
+      Handler: app.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TasksTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConnectionsTable
+        - Statement:
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/${Stage}/POST/@connections/*"
+      Environment:
+        Variables:
+          WEBSOCKET_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+      Events:
+        GetTasks:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TaskApi
+            Path: /tasks
+            Method: GET
+        GetTask:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TaskApi
+            Path: /tasks/{taskId}
+            Method: GET
+        UpsertTask:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TaskApi
+            Path: /tasks
+            Method: PUT
+        DeleteTask:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TaskApi
+            Path: /tasks/{taskId}
+            Method: DELETE
+
+  # ── WebSocket API ──────────────────────────────────────────────────────
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "taskflow-ws-${Stage}"
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: !Ref Stage
+      AutoDeploy: true
+
+  # ── Lambda Authorizer ──────────────────────────────────────────────────
+  WsAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "taskflow-ws-authorizer-${Stage}"
+      CodeUri: lambdas/authorizer/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+      Environment:
+        Variables:
+          COGNITO_USER_POOL_ID:  !Ref TaskFlowUserPool
+          COGNITO_APP_CLIENT_ID: !Ref TaskFlowUserPoolClient
+
+  WsAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref WebSocketApi
+      AuthorizerType: REQUEST
+      AuthorizerUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsAuthorizerFunction.Arn}/invocations"
+      IdentitySource: ["route.request.header.Authorization"]
+      Name: CognitoJwtAuthorizer
+
+  WsAuthorizerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt WsAuthorizerFunction.Arn
+      Principal: apigateway.amazonaws.com
+
+  # ── $connect ──────────────────────────────────────────────────────────
+  WsConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "taskflow-ws-connect-${Stage}"
+      CodeUri: lambdas/ws-connect/
+      Handler: app.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+
+  WsConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsConnectFunction.Arn}/invocations"
+
+  WsConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $connect
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref WsAuthorizer
+      Target: !Sub "integrations/${WsConnectIntegration}"
+
+  WsConnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt WsConnectFunction.Arn
+      Principal: apigateway.amazonaws.com
+
+  # ── $disconnect ───────────────────────────────────────────────────────
+  WsDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "taskflow-ws-disconnect-${Stage}"
+      CodeUri: lambdas/ws-disconnect/
+      Handler: app.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+
+  WsDisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsDisconnectFunction.Arn}/invocations"
+
+  WsDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${WsDisconnectIntegration}"
+
+  WsDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt WsDisconnectFunction.Arn
+      Principal: apigateway.amazonaws.com
+
+Outputs:
+  HttpApiEndpoint:
+    Description: "URL base de la HTTP API (CRUD de tareas)"
+    Value: !Sub "https://${TaskApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+    Export:
+      Name: !Sub "TaskFlow-HttpApi-${Stage}"
+
+  WebSocketEndpoint:
+    Description: "URL del WebSocket API"
+    Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+    Export:
+      Name: !Sub "TaskFlow-WsApi-${Stage}"
+
+  UserPoolId:
+    Description: "Cognito User Pool ID"
+    Value: !Ref TaskFlowUserPool
+    Export:
+      Name: !Sub "TaskFlow-UserPoolId-${Stage}"
+
+  UserPoolClientId:
+    Description: "Cognito App Client ID"
+    Value: !Ref TaskFlowUserPoolClient
+    Export:
+      Name: !Sub "TaskFlow-UserPoolClientId-${Stage}"
+
+  TasksTableName:
+    Description: "Nombre de la tabla DynamoDB de tareas"
+    Value: !Ref TasksTable
+
+  ConnectionsTableName:
+    Description: "Nombre de la tabla DynamoDB de conexiones WebSocket"
+    Value: !Ref ConnectionsTable
