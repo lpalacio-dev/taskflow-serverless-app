@@ -17,7 +17,7 @@ from jose import jwt, JWTError, ExpiredSignatureError
 logger = logging.getLogger()
 logger.setLevel("INFO")
 
-REGION    = os.environ.get("AWS_REGION", "us-east-1")
+REGION    = os.environ.get("AWS_REGION", "us-east-2")
 POOL_ID   = os.environ["COGNITO_USER_POOL_ID"]
 CLIENT_ID = os.environ["COGNITO_APP_CLIENT_ID"]
 
@@ -61,10 +61,18 @@ def generate_policy(principal_id, effect, resource, context=None):
 
 def lambda_handler(event, context):
     method_arn = event.get("methodArn", "*")
+    
+    # CAMBIO CRÍTICO: Intentar obtener el token del header primero, luego del query param
     token = (event.get("headers") or {}).get("Authorization", "").removeprefix("Bearer ").strip()
+    
+    if not token:
+        # Los browsers no permiten headers custom en WebSocket nativo.
+        # El frontend debe pasar el token como query param: wss://...?token=xxx
+        query_params = event.get("queryStringParameters") or {}
+        token = query_params.get("token", "").strip()
 
     if not token:
-        logger.warning("No token — denying")
+        logger.warning("No token in header or query params — denying")
         return generate_policy("anonymous", "Deny", method_arn)
 
     try:

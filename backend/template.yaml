@@ -42,6 +42,7 @@ Resources:
       ClientName: taskflow-web-client
       UserPoolId: !Ref TaskFlowUserPool
       ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
         - ALLOW_USER_PASSWORD_AUTH    # login con email + password
         - ALLOW_REFRESH_TOKEN_AUTH    # renovar tokens
       GenerateSecret: false           # DEBE ser false para apps web/SPA
@@ -186,7 +187,7 @@ Resources:
       ApiId: !Ref WebSocketApi
       AuthorizerType: REQUEST
       AuthorizerUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsAuthorizerFunction.Arn}/invocations"
-      IdentitySource: ["route.request.header.Authorization"]
+      IdentitySource: ["route.request.querystring.token"]
       Name: CognitoJwtAuthorizer
 
   WsAuthorizerPermission:
