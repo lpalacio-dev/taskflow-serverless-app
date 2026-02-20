@@ -110,25 +110,15 @@ cp handler.py ./package/
 cd package && zip -r ../authorizer.zip . && cd ..
 ```
 
-### 2. Crear bucket S3 para el deploy (una sola vez)
-```bash
-aws s3 mb s3://taskflow-deploy-$(aws sts get-caller-identity --query Account --output text)
-```
-
-### 3. Subir el zip del authorizer
-```bash
-aws s3 cp authorizer.zip s3://taskflow-deploy-$(aws sts get-caller-identity --query Account --output text)/
-```
-
-### 4. Build + Deploy con SAM
+### 2. Build + Deploy con SAM
 ```bash
 cd backend
-sam build
+sam build --user-profile <userprofile>
 sam deploy --guided
 # Seguir el wizard: ingresar Stage=prod, confirmar cambios
 ```
 
-### 5. Anotar los Outputs del deploy
+### 3. Anotar los Outputs del deploy
 ```
 HttpApiEndpoint     → https://XXXXXXXXXX.execute-api.us-east-1.amazonaws.com/prod
 WebSocketEndpoint   → wss://YYYYYYYYYY.execute-api.us-east-1.amazonaws.com/prod
@@ -136,19 +126,17 @@ UserPoolId          → us-east-1_XXXXXXXXX
 UserPoolClientId    → 1example23456789
 ```
 
-### 6. Configurar el frontend
-Editar `frontend/index.html`, sección `CONFIG`:
-```javascript
-const CONFIG = {
-  HTTP_API:       'https://XXXXXXXXXX.execute-api.us-east-1.amazonaws.com/prod',
-  WS_API:         'wss://YYYYYYYYYY.execute-api.us-east-1.amazonaws.com/prod',
-  USER_POOL_ID:   'us-east-1_XXXXXXXXX',
-  CLIENT_ID:      '1example23456789',
-  REGION:         'us-east-1',
-};
+### 4. Configurar el frontend con variables de entorno
+Editar en `frontend`, crear un archivo `.env` revisar el archivo `.env.example`, también agregar variables de entorno en `Amplify`:
+```bash
+VITE_HTTP_API=
+VITE_WS_API=
+VITE_USER_POOL_ID=
+VITE_USER_POOL_CLIENT_ID=
+VITE_REGION=us-east-1
 ```
 
-### 7. Hostear el frontend con Amplify
+### 5. Hostear el frontend con Amplify si utilizas Gen 1
 ```bash
 npm install -g @aws-amplify/cli
 amplify init
@@ -156,7 +144,7 @@ amplify add hosting   # elegir: Hosting with Amplify Console → Manual
 amplify publish
 ```
 
-### 8. Limpiar (evitar costos)
+### 6. Limpiar (evitar costos)
 ```bash
 sam delete
 ```
